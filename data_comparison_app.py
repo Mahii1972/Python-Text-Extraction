@@ -70,7 +70,7 @@ def compare_data(base_df, text):
     return pd.DataFrame(results, columns=['Match Type', 'Match String', 'File Context'])
 
 # Streamlit App
-st.title("Data Comparison App")
+st.title("Travel Data Verifier")
 
 # File Uploads
 st.sidebar.header("Upload Files")
