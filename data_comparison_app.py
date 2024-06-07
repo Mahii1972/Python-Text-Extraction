@@ -35,11 +35,13 @@ def extract_text_from_excel(uploaded_file):
 # Function to compare data
 def compare_data(base_df, text):
     results = []
+    # Remove spaces from the text for comparison
+    text = re.sub(r'\s+', '', text)
     for index, row in base_df.iterrows():
         phone = clean_phone_number(row['Mobile No']) if pd.notnull(row['Mobile No']) else ''
-        email = row['Mail ID'].lower() if pd.notnull(row['Mail ID']) else ''
-        name = row['Passenger Name'].lower() if pd.notnull(row['Passenger Name']) else ''
-        agency = row['Travel Agency'].lower() if pd.notnull(row['Travel Agency']) else ''
+        email = row['Mail ID'].replace(" ", "").lower() if pd.notnull(row['Mail ID']) else ''
+        name = row['Passenger Name'].replace(" ", "").lower() if pd.notnull(row['Passenger Name']) else ''
+        agency = row['Travel Agency'].replace(" ", "").lower() if pd.notnull(row['Travel Agency']) else ''
 
         phone_match = re.search(phone, text) if phone else None
         email_match = re.search(re.escape(email), text, re.IGNORECASE) if email else None
