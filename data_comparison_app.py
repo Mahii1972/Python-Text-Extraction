@@ -3,6 +3,8 @@ import pandas as pd
 import re
 import pdfplumber
 from bs4 import BeautifulSoup
+import msoffcrypto
+import io
 
 # Function to clean phone numbers
 def clean_phone_number(phone):
@@ -28,9 +30,25 @@ def extract_text_from_html(uploaded_file):
     return text
 
 # Function to extract text from Excel
-def extract_text_from_excel(uploaded_file):
-    df = pd.read_excel(uploaded_file)
-    return df.to_string()
+def extract_text_from_excel(uploaded_file, password=None):
+    try:
+        if password:
+            decrypted = io.BytesIO()
+            file = msoffcrypto.OfficeFile(uploaded_file)
+            file.load_key(password=password)
+            file.decrypt(decrypted)
+            df = pd.read_excel(decrypted)
+        else:
+            df = pd.read_excel(uploaded_file)
+        return df.to_string()
+    except msoffcrypto.exceptions.InvalidKeyError:
+        return "encrypted"
+    except Exception as e:
+        if "Workbook is encrypted" in str(e) or "Can't find workbook in OLE2 compound document" in str(e):
+            return "encrypted"
+        else:
+            st.error(f"Failed to read Excel file: {e}")
+            return None
 
 # Function to compare data
 def compare_data(base_df, text):
@@ -98,11 +116,15 @@ if base_file and compare_file:
             compare_text = extract_text_from_html(compare_file)
         elif file_extension in ['xls', 'xlsx']:
             compare_text = extract_text_from_excel(compare_file)
+            if compare_text == "encrypted":
+                password = st.sidebar.text_input("Enter password for encrypted Excel files", type="password")
+                if password:
+                    compare_text = extract_text_from_excel(compare_file, password)
         else:
             st.error("Unsupported file type")
 
         # Perform Comparison
-        if compare_text:
+        if compare_text and compare_text != "encrypted":
             comparison_results = compare_data(base_df, compare_text)
 
             # Display Results
