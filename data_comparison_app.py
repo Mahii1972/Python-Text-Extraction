@@ -95,9 +95,9 @@ st.title("Travel Data Verifier")
 # File Uploads
 st.sidebar.header("Upload Files")
 base_file = st.sidebar.file_uploader("Upload Base Excel File", type=['xlsx', 'xls'])
-compare_file = st.sidebar.file_uploader("Upload File to Compare", type=['pdf', 'txt', 'htm', 'html', 'xlsx', 'xls'])
+compare_files = st.sidebar.file_uploader("Upload Files to Compare", type=['pdf', 'txt', 'htm', 'html', 'xlsx', 'xls'], accept_multiple_files=True)
 
-if base_file and compare_file:
+if base_file and compare_files:
     try:
         base_df = pd.read_excel(base_file)
         base_df['Mobile No'] = base_df['Mobile No'].apply(clean_phone_number)
@@ -105,27 +105,33 @@ if base_file and compare_file:
         base_df['Passenger Name'] = base_df['Passenger Name'].str.lower()
         base_df['Travel Agency'] = base_df['Travel Agency'].str.lower()
 
-        file_extension = compare_file.name.split('.')[-1].lower()
+        all_compare_text = ""
+        for compare_file in compare_files:
+            file_extension = compare_file.name.split('.')[-1].lower()
 
-        # Extract text based on file type
-        if file_extension == 'pdf':
-            compare_text = extract_text_from_pdf(compare_file)
-        elif file_extension == 'txt':
-            compare_text = extract_text_from_txt(compare_file)
-        elif file_extension in ['htm', 'html']:
-            compare_text = extract_text_from_html(compare_file)
-        elif file_extension in ['xls', 'xlsx']:
-            compare_text = extract_text_from_excel(compare_file)
-            if compare_text == "encrypted":
-                password = st.sidebar.text_input("Enter password for encrypted Excel files", type="password")
-                if password:
-                    compare_text = extract_text_from_excel(compare_file, password)
-        else:
-            st.error("Unsupported file type")
+            # Extract text based on file type
+            if file_extension == 'pdf':
+                compare_text = extract_text_from_pdf(compare_file)
+            elif file_extension == 'txt':
+                compare_text = extract_text_from_txt(compare_file)
+            elif file_extension in ['htm', 'html']:
+                compare_text = extract_text_from_html(compare_file)
+            elif file_extension in ['xls', 'xlsx']:
+                compare_text = extract_text_from_excel(compare_file)
+                if compare_text == "encrypted":
+                    password = st.sidebar.text_input("Enter password for encrypted Excel files", type="password")
+                    if password:
+                        compare_text = extract_text_from_excel(compare_file, password)
+            else:
+                st.error("Unsupported file type")
+                continue
+
+            if compare_text and compare_text != "encrypted":
+                all_compare_text += compare_text
 
         # Perform Comparison
-        if compare_text and compare_text != "encrypted":
-            comparison_results = compare_data(base_df, compare_text)
+        if all_compare_text:
+            comparison_results = compare_data(base_df, all_compare_text)
 
             # Display Results
             if not comparison_results.empty:
