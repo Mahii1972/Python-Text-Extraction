@@ -5,6 +5,7 @@ import pdfplumber
 from bs4 import BeautifulSoup
 import msoffcrypto
 import io
+from fuzzywuzzy import fuzz
 
 # Function to clean phone numbers
 def clean_phone_number(phone):
@@ -29,7 +30,7 @@ def extract_text_from_html(uploaded_file):
     text = soup.get_text()
     return text
 
-# Function to extract text from Excel
+# Modified function to extract text from Excel
 def extract_text_from_excel(uploaded_file, password=None):
     try:
         if password:
@@ -37,10 +38,12 @@ def extract_text_from_excel(uploaded_file, password=None):
             file = msoffcrypto.OfficeFile(uploaded_file)
             file.load_key(password=password)
             file.decrypt(decrypted)
-            df = pd.read_excel(decrypted)
+            df = pd.read_excel(decrypted, dtype=str)
         else:
-            df = pd.read_excel(uploaded_file)
-        return df.to_string()
+            df = pd.read_excel(uploaded_file, dtype=str)
+        
+        # Convert DataFrame to string while preserving original format
+        return df.to_string(index=False, header=True, float_format='{:.0f}'.format)
     except msoffcrypto.exceptions.InvalidKeyError:
         return "encrypted"
     except Exception as e:
@@ -51,43 +54,44 @@ def extract_text_from_excel(uploaded_file, password=None):
             return None
 
 # Function to compare data
-def compare_data(base_df, text):
+def compare_data(base_df, text, selected_columns):
     results = []
-    # Remove spaces from the text for comparison
-    text = re.sub(r'\s+', '', text)
+    # Remove spaces and convert to lowercase for comparison
+    text = re.sub(r'\s+', '', text.lower())
+    total_comparisons = len(base_df) * len(selected_columns)
+    progress_bar = st.progress(0)
+    progress_text = st.empty()
+    
     for index, row in base_df.iterrows():
-        phone = clean_phone_number(row['Mobile No']) if pd.notnull(row['Mobile No']) else ''
-        email = row['Mail ID'].replace(" ", "").lower() if pd.notnull(row['Mail ID']) else ''
-        name = row['Passenger Name'].replace(" ", "").lower() if pd.notnull(row['Passenger Name']) else ''
-        agency = row['Travel Agency'].replace(" ", "").lower() if pd.notnull(row['Travel Agency']) else ''
-
-        phone_match = re.search(phone, text) if phone else None
-        email_match = re.search(re.escape(email), text, re.IGNORECASE) if email else None
-        name_match = re.search(re.escape(name), text, re.IGNORECASE) if name else None
-        agency_match = re.search(re.escape(agency), text, re.IGNORECASE) if agency else None
-
-        if phone_match:
-            context_start = max(phone_match.start() - 10, 0)
-            context_end = phone_match.end() + 10
-            context = text[context_start:context_end]
-            results.append(['Phone', phone_match.group(), context])
-        if email_match:
-            context_start = max(email_match.start() - 10, 0)
-            context_end = email_match.end() + 10
-            context = text[context_start:context_end]
-            results.append(['Email', email_match.group(), context])
-        if name_match:
-            context_start = max(name_match.start() - 10, 0)
-            context_end = name_match.end() + 10
-            context = text[context_start:context_end]
-            results.append(['Name', name_match.group(), context])
-        if agency_match:
-            context_start = max(agency_match.start() - 10, 0)
-            context_end = agency_match.end() + 10
-            context = text[context_start:context_end]
-            results.append(['Agency', agency_match.group(), context])
-
-    return pd.DataFrame(results, columns=['Match Type', 'Match String', 'File Context'])
+        for column in selected_columns:
+            value = str(row[column]).replace(" ", "").lower() if pd.notnull(row[column]) else ''
+            if value:
+                # Use fuzzy matching instead of exact matching
+                matches = []
+                for i in range(len(text) - len(value) + 1):
+                    substring = text[i:i+len(value)]
+                    ratio = fuzz.ratio(value, substring)
+                    if ratio > 80:  # Increased threshold for better accuracy
+                        matches.append((ratio, substring, i))
+                
+                # Sort matches by ratio in descending order
+                matches.sort(reverse=True, key=lambda x: x[0])
+                
+                if matches:
+                    best_match = matches[0]
+                    context_start = max(best_match[2] - 10, 0)  # Increased context
+                    context_end = min(best_match[2] + len(best_match[1]) + 10, len(text))  # Increased context
+                    context = text[context_start:context_end]
+                    results.append([column, best_match[1], context, best_match[0]])
+            
+            # Update progress
+            progress = (index * len(selected_columns) + selected_columns.index(column) + 1) / total_comparisons
+            progress_bar.progress(progress)
+            progress_text.text(f"Processing... {progress:.1%}")
+    
+    progress_bar.empty()
+    progress_text.empty()
+    return pd.DataFrame(results, columns=['Match Type', 'Match String', 'File Context', 'Match Ratio'])
 
 # Streamlit App
 st.title("Travel Data Verifier")
@@ -95,49 +99,60 @@ st.title("Travel Data Verifier")
 # File Uploads
 st.sidebar.header("Upload Files")
 base_file = st.sidebar.file_uploader("Upload Base Excel File", type=['xlsx', 'xls'])
-compare_files = st.sidebar.file_uploader("Upload Files to Compare", type=['pdf', 'txt', 'htm', 'html', 'xlsx', 'xls'], accept_multiple_files=True)
+manifest_files = st.sidebar.file_uploader("Upload Manifest Files to Compare", type=['pdf', 'txt', 'htm', 'html', 'xlsx', 'xls'], accept_multiple_files=True)
 
-if base_file and compare_files:
+if base_file:
     try:
-        base_df = pd.read_excel(base_file)
-        base_df['Mobile No'] = base_df['Mobile No'].apply(clean_phone_number)
-        base_df['Mail ID'] = base_df['Mail ID'].str.lower()
-        base_df['Passenger Name'] = base_df['Passenger Name'].str.lower()
-        base_df['Travel Agency'] = base_df['Travel Agency'].str.lower()
+        base_df = pd.read_excel(base_file, dtype=str)
+    
+        
+        # Show column names with checkboxes
+        st.sidebar.header("Select Columns to Compare")
+        selected_columns = []
+        for column in base_df.columns:
+            if st.sidebar.checkbox(column, key=column):
+                selected_columns.append(column)
+        
+        if manifest_files and selected_columns:
+            all_compare_text = ""
+            for manifest_file in manifest_files:
+                file_extension = manifest_file.name.split('.')[-1].lower()
 
-        all_compare_text = ""
-        for compare_file in compare_files:
-            file_extension = compare_file.name.split('.')[-1].lower()
+                # Extract text based on file type
+                if file_extension == 'pdf':
+                    compare_text = extract_text_from_pdf(manifest_file)
+                elif file_extension == 'txt':
+                    compare_text = extract_text_from_txt(manifest_file)
+                elif file_extension in ['htm', 'html']:
+                    compare_text = extract_text_from_html(manifest_file)
+                elif file_extension in ['xls', 'xlsx']:
+                    compare_text = extract_text_from_excel(manifest_file)
+                    if compare_text == "encrypted":
+                        password = st.sidebar.text_input("Enter password for encrypted Excel files", type="password")
+                        if password:
+                            compare_text = extract_text_from_excel(manifest_file, password)
+                else:
+                    st.error("Unsupported file type")
+                    continue
 
-            # Extract text based on file type
-            if file_extension == 'pdf':
-                compare_text = extract_text_from_pdf(compare_file)
-            elif file_extension == 'txt':
-                compare_text = extract_text_from_txt(compare_file)
-            elif file_extension in ['htm', 'html']:
-                compare_text = extract_text_from_html(compare_file)
-            elif file_extension in ['xls', 'xlsx']:
-                compare_text = extract_text_from_excel(compare_file)
-                if compare_text == "encrypted":
-                    password = st.sidebar.text_input("Enter password for encrypted Excel files", type="password")
-                    if password:
-                        compare_text = extract_text_from_excel(compare_file, password)
-            else:
-                st.error("Unsupported file type")
-                continue
+                if compare_text and compare_text != "encrypted":
+                    all_compare_text += compare_text
 
-            if compare_text and compare_text != "encrypted":
-                all_compare_text += compare_text
 
-        # Perform Comparison
-        if all_compare_text:
-            comparison_results = compare_data(base_df, all_compare_text)
 
-            # Display Results
-            if not comparison_results.empty:
-                st.subheader("Comparison Results:")
-                st.dataframe(comparison_results)
-            else:
-                st.info("No matches found.")
+            # Perform Comparison
+            if all_compare_text:
+                comparison_results = compare_data(base_df, all_compare_text, selected_columns)
+
+                # Display Results
+                if not comparison_results.empty:
+                    st.subheader("Comparison Results:")
+                    st.dataframe(comparison_results)
+                else:
+                    st.info("No matches found.")
+        elif not selected_columns:
+            st.warning("Please select at least one column to compare.")
+        elif not manifest_files:
+            st.warning("Please upload manifest files to compare.")
     except Exception as e:
         st.error(f"An error occurred: {e}")
