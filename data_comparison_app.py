@@ -60,7 +60,7 @@ def extract_from_excel(uploaded_file, password=None):
             st.error(f"Failed to read Excel file: {e}")
             return None
 
-# Function to compare data
+# Updated function to compare data with word-by-word matching for Excel
 def compare_data(base_df, compare_data, selected_columns, match_ratio, is_excel=False):
     results = []
     total_comparisons = len(base_df) * len(selected_columns)
@@ -69,28 +69,33 @@ def compare_data(base_df, compare_data, selected_columns, match_ratio, is_excel=
     
     for index, row in base_df.iterrows():
         for column in selected_columns:
-            value = str(row[column]).replace(" ", "").lower() if pd.notnull(row[column]) else ''
-            if value:
+            base_value = str(row[column]) if pd.notnull(row[column]) else ''
+            if base_value:
                 if is_excel:
-                    matches = []
+                    base_words = re.findall(r'\w+', base_value.lower())
                     for compare_value, cell_location, original_value in compare_data:
-                        compare_value = str(compare_value).replace(" ", "").lower()
-                        ratio = fuzz.ratio(value, compare_value)
-                        if ratio > match_ratio:
-                            matches.append((ratio, compare_value, cell_location, original_value))
-                    
-                    matches.sort(reverse=True, key=lambda x: x[0])
-                    
-                    if matches:
-                        best_match = matches[0]
-                        results.append([column, best_match[1], f"{best_match[2]} ({best_match[3]})", best_match[0]])
+                        compare_value = str(compare_value)
+                        compare_words = re.findall(r'\w+', compare_value.lower())
+                        
+                        matched_words = []
+                        for base_word in base_words:
+                            for compare_word in compare_words:
+                                ratio = fuzz.ratio(base_word, compare_word)
+                                if ratio >= match_ratio:
+                                    matched_words.append((base_word, compare_word, ratio))
+                        
+                        if matched_words:
+                            avg_ratio = sum(match[2] for match in matched_words) / len(matched_words)
+                            matched_base = ' '.join(match[0] for match in matched_words)
+                            matched_compare = ' '.join(match[1] for match in matched_words)
+                            results.append([column, base_value, f"{cell_location} ({matched_compare})", avg_ratio])
                 else:
                     # Existing logic for non-Excel files
-                    text = re.sub(r'\s+', '', compare_data.lower())
+                    text = compare_data.lower()
                     matches = []
-                    for i in range(len(text) - len(value) + 1):
-                        substring = text[i:i+len(value)]
-                        ratio = fuzz.ratio(value, substring)
+                    for i in range(len(text) - len(base_value) + 1):
+                        substring = text[i:i+len(base_value)]
+                        ratio = fuzz.ratio(base_value.lower(), substring)
                         if ratio > match_ratio:
                             matches.append((ratio, substring, i))
                     
@@ -101,7 +106,7 @@ def compare_data(base_df, compare_data, selected_columns, match_ratio, is_excel=
                         context_start = max(best_match[2] - 10, 0)
                         context_end = min(best_match[2] + len(best_match[1]) + 10, len(text))
                         context = text[context_start:context_end]
-                        results.append([column, best_match[1], context, best_match[0]])
+                        results.append([column, base_value, context, best_match[0]])
             
             # Update progress
             progress = (index * len(selected_columns) + selected_columns.index(column) + 1) / total_comparisons
@@ -110,7 +115,7 @@ def compare_data(base_df, compare_data, selected_columns, match_ratio, is_excel=
     
     progress_bar.empty()
     progress_text.empty()
-    return pd.DataFrame(results, columns=['Match Type', 'Match String', 'File Context/Cell Location', 'Match Ratio'])
+    return pd.DataFrame(results, columns=['Match Type', 'Base Value', 'File Context/Cell Location', 'Match Ratio'])
 
 # Streamlit App
 st.title("Travel Data Verifier")
@@ -121,7 +126,7 @@ base_file = st.sidebar.file_uploader("Upload Base Excel File", type=['xlsx', 'xl
 manifest_files = st.sidebar.file_uploader("Upload Manifest Files to Compare", type=['pdf', 'txt', 'htm', 'html', 'xlsx', 'xls', 'csv'], accept_multiple_files=True)
 
 # Match Ratio Slider
-match_ratio = st.sidebar.slider("Set Match Ratio (Above 80 is recommended to avoid false positives)", min_value=50, max_value=100, value=80, step=1)
+match_ratio = st.sidebar.slider("Set Match Ratio (Recommended 80 or above for best results)", min_value=50, max_value=100, value=80, step=1)
 
 if base_file:
     try:
@@ -168,6 +173,7 @@ if base_file:
             if not all_results.empty:
                 st.subheader("Comparison Results:")
                 st.dataframe(all_results)
+            
             else:
                 st.info("No matches found.")
         elif not selected_columns:
