@@ -72,23 +72,24 @@ def compare_data(base_df, compare_data, selected_columns, match_ratio, is_excel=
             base_value = str(row[column]) if pd.notnull(row[column]) else ''
             if base_value:
                 if is_excel:
-                    base_words = re.findall(r'\w+', base_value.lower())
+                    # Keep base_value as is, don't break into words
                     for compare_value, cell_location, original_value in compare_data:
                         compare_value = str(compare_value)
                         compare_words = re.findall(r'\w+', compare_value.lower())
                         
-                        matched_words = []
-                        for base_word in base_words:
-                            for compare_word in compare_words:
-                                ratio = fuzz.ratio(base_word, compare_word)
-                                if ratio >= match_ratio:
-                                    matched_words.append((base_word, compare_word, ratio))
+                        # Compare full base_value against each word and combinations
+                        max_ratio = 0
+                        best_match = ''
+                        for i in range(len(compare_words)):
+                            for j in range(i+1, len(compare_words)+1):
+                                compare_phrase = ' '.join(compare_words[i:j])
+                                ratio = fuzz.ratio(base_value.lower(), compare_phrase)
+                                if ratio > max_ratio:
+                                    max_ratio = ratio
+                                    best_match = compare_phrase
                         
-                        if matched_words:
-                            avg_ratio = sum(match[2] for match in matched_words) / len(matched_words)
-                            matched_base = ' '.join(match[0] for match in matched_words)
-                            matched_compare = ' '.join(match[1] for match in matched_words)
-                            results.append([column, base_value, f"{cell_location} ({matched_compare})", avg_ratio])
+                        if max_ratio >= match_ratio:
+                            results.append([column, base_value, f"{cell_location} ({best_match})", max_ratio])
                 else:
                     # Existing logic for non-Excel files
                     text = compare_data.lower()
